@@ -4,48 +4,51 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/golangcollege/sessions"
+	"github.com/jackc/pgx/v4/pgxpool"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
-	"github.com/jackc/pgx/v4/pgxpool"
 	"se02.com/pkg/models/postgres"
+	"time"
 )
 
 type application struct {
 	errorLog *log.Logger
 	infoLog  *log.Logger
+	session  *sessions.Session
 	snippets *postgres.SnippetModel
+	templateCache map[string]*template.Template
 }
 
 func main() {
 	addr := flag.String("addr", ":4000", "HTTP network address")
-	dsn := flag.String("dsn", "postgres://postgres:1234@localhost:5432/snippetbox", "Postgre data source name")
+	dsn := flag.String("dns", "postgres://postgres:1@localhost:5432/snippetbox", "Postgre data source name")
+	secret := flag.String("secret", "s6Ndh+pPbnzHbS*+9Pk8qGWhTzbpa@ge", "Secret key")
 	flag.Parse()
 	infoLog := log.New(os.Stdout, "INFO\t", log.Ldate|log.Ltime)
 	errorLog := log.New(os.Stderr, "ERROR\t", log.Ldate|log.Ltime|log.Lshortfile)
 	db, err := openDB(*dsn)
-	if err != nil {
-		errorLog.Fatal(err)
-	}
+	if err != nil {errorLog.Fatal(err)}
 	defer db.Close()
-	var greeting string
-	err = db.QueryRow(context.Background(), "select 'Hello, world!'").Scan(&greeting)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "QueryRow failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println(greeting)
+	templateCache, err := newTemplateCache("./ui/html/")
+	if err != nil {errorLog.Fatal(err)}
+	session := sessions.New([]byte(*secret))
+	session.Lifetime = 12 * time.Hour
 	app := &application{
-		errorLog: errorLog,
-		infoLog:  infoLog,
-		snippets: &postgres.SnippetModel{DB: db},
+		errorLog:      errorLog,
+		infoLog:       infoLog,
+		session:       session,
+		snippets:      &postgres.SnippetModel{DB: db},
+		templateCache: templateCache,
 	}
 	srv := &http.Server{
 		Addr:     *addr,
 		ErrorLog: errorLog,
 		Handler:  app.routes(),
 	}
-	infoLog.Printf("Starting server on %v", *addr)
+	infoLog.Printf("Starting a server on port%v", *addr)
 	err = srv.ListenAndServe()
 	errorLog.Fatal(err)
 }
